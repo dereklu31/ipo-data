@@ -25,7 +25,7 @@ window.IPO_OVERVIEW = [
   { name:"齐云山食品", code:"2797.HK", open:"2026/6/30", close:"2026/7/6", list:"2026/7/9",  sponsor:"中泰国际" },
   { name:"珞石机器人", code:"3752.HK", open:"2026/6/30", close:"2026/7/6", list:"2026/7/9",  sponsor:"中金公司(香港)、国泰君安国际" },
   { name:"三环集团",   code:"6951.HK", open:"2026/6/30", close:"2026/7/6", list:"2026/7/9",  sponsor:"中国银河国际" },
-  { name:"晶合集成",   code:"2249.HK", open:"2026/6/30", close:"2026/7/6", list:"2026/7/10", sponsor:"中金公司(香港)" },
+  { name:"晶合集成",   code:"2249.HK", open:"2026/6/30", close:"2026/7/7", list:"2026/7/10", sponsor:"中金公司(香港)" },
   { name:"滨化股份",   code:"6745.HK", open:"2026/6/30", close:"2026/7/7", list:"2026/7/10", sponsor:"华泰国际、建银国际" },
   { name:"永康控股",   code:"2523.HK", open:"2026/6/30", close:"2026/7/8", list:"2026/7/13", sponsor:"华富建业证券、华富建业企业融资、同人融资" }
 ];
