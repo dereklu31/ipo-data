@@ -12,17 +12,17 @@ permissions:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 15         # 整个任务最多 15 分钟，防卡死
+    timeout-minutes: 45         # 整批 16 只研究量大，给足时间；处理不完下次续
     steps:
       - name: 拉取仓库
         uses: actions/checkout@v4
 
       - name: 用 Claude 更新总览与逐只明细
         uses: anthropics/claude-code-action@v1
-        timeout-minutes: 11     # Claude 这步最多 11 分钟，超时即止
+        timeout-minutes: 42     # Claude 这步最多 42 分钟
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          claude_args: '--allowedTools "WebSearch,WebFetch,Read,Edit,Write" --max-turns 60'
+          claude_args: '--allowedTools "WebSearch,WebFetch,Read,Edit,Write" --max-turns 300'
           prompt: |
             你在一个 GitHub Actions 环境里，仓库根目录有两个数据文件：
             ipo_data.js（window.IPO_OVERVIEW：招股总览）
@@ -42,7 +42,9 @@ jobs:
             【任务二：补齐逐只明细 deal_details.js —— 仅对“新股”，没有新股就跳过】
             - 读 ipo_data.js 得到“当前在招(未上市)股票代码”；读 deal_details.js 得到 window.IPO_DEALS 已有的键。
             - 找出“在招、但 deal_details.js 里还没有明细”的股票。若没有这样的股票，则【完全不改 deal_details.js】，任务二结束。
-            - 若有，最多挑 3 只（优先临近上市日的），逐只联网研究，在 window.IPO_DEALS 中“新增”其条目，字段：
+            - 若有，就把它们【全部】逐只补齐（不设数量上限；优先临近上市日的先做）。
+              每处理完一只就立刻用 Edit 写入 deal_details.js 保存（别攒到最后），这样即使中途超时，已完成的也已落盘、下次只补剩下的。
+              在 window.IPO_DEALS 中“新增”每只的条目，字段：
                 fx: 7.84,
                 shares: 全球发售规模(股,数字),
                 price: 发行价(定价或招股价上限,数字),
