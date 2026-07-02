@@ -2,63 +2,56 @@ name: 每日更新港股招股总览
 
 on:
   schedule:
-    - cron: '15 0 * * *'    # 00:15 UTC = 香港时间 08:15，每天一次
-  workflow_dispatch:          # 允许在网页上手动点“Run workflow”测试
+    - cron: '15 0 * * *'      # 00:15 UTC = 香港时间 08:15，每天一次
+  workflow_dispatch:            # 允许在网页上手动 Run workflow
 
 permissions:
-  contents: write             # 允许提交回仓库
-  id-token: write             # claude-code-action 需要它换取 OIDC 令牌
+  contents: write               # 允许提交回仓库
+  id-token: write               # claude-code-action 需要它换取 OIDC 令牌
 
 jobs:
   update:
     runs-on: ubuntu-latest
+    timeout-minutes: 12         # 整个任务最多 12 分钟，防止卡死空烧
     steps:
       - name: 拉取仓库
         uses: actions/checkout@v4
 
-      - name: 用 Claude 联网核实并重写 ipo_data.js
+      - name: 用 Claude 联网核实并修正 ipo_data.js
         uses: anthropics/claude-code-action@v1
+        timeout-minutes: 8      # Claude 这一步最多 8 分钟，超时即止
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          claude_args: '--allowedTools "WebSearch,WebFetch,Read,Write,Edit"'
+          claude_args: '--allowedTools "WebSearch,WebFetch,Read,Edit,Write" --max-turns 30'
           prompt: |
-            你在一个 GitHub Actions 运行环境里，当前工作目录(仓库根目录)有一个文件 ipo_data.js。
-            任务：联网核实“当前在香港招股中 / 即将上市”的新股，然后把 ipo_data.js 整体覆盖重写。
+            你在一个 GitHub Actions 环境里，仓库根目录有文件 ipo_data.js（内含 window.IPO_OVERVIEW 数组）。
+            任务：用最多几分钟，联网核实“当前在香港招股中 / 即将上市”的新股，必要时修正 ipo_data.js 的数据行。高效完成，不要反复狂搜。
 
-            【每只股票的字段】一个对象：
+            每只股票字段：
             { name:"简称", code:"NNNN.HK", open:"开簿日(招股开始)", close:"簿记结束(招股截止)", list:"上市日", sponsor:"保荐人" }
-            - 日期一律写成 2026/M/D 这种格式（当前年份按实际）。
-            - 不要“暗盘”字段。
+            - 日期用 2026/M/D 格式（年份按实际）。
+            - 保荐人含联席时用中文顿号“、”分隔，如 "中信证券(香港)、高盛(亚洲)、中金公司(香港)"。
 
-            【保荐人】必须逐只核实；有联席保荐人时用中文顿号“、”把多家连起来，
-            例如 "中信证券(香港)、高盛(亚洲)、中金公司(香港)"。
+            核实要求：
+            - 用 WebSearch / WebFetch 查经济日报(hket)、新浪财经、东方财富、ZAKER、证券时报等个股招股新闻；
+            - AAStocks / 富途 的日历页只给相对日期、易把“招股截止日”与“上市日”弄混，不要采信其笼统摘要；
+            - 每个字段尽量两个独立来源一致再写；核不实就保留原值或留空，绝不猜测。
 
-            【可靠性要求 · 非常重要】
-            - 用 WebSearch / WebFetch 检索个股招股新闻：经济日报(hket)、新浪财经、东方财富、ZAKER、凤凰网、证券时报等；
-            - AAStocks、富途 的“上市时间表”页只给“今日截止 / N日后截止”这类相对日期，
-              且自动摘要常把“招股截止日”与“上市日”弄混 —— 不要采信这类笼统结论；
-            - 每个字段至少要有 2 个独立可靠来源一致，才写入；核不实就留空 ""，绝不猜测。
-
-            【输出】用写文件工具把仓库根目录的 ipo_data.js 覆盖为下面的结构（UTF-8 编码，保留注释头）：
-
-            /* 港股 IPO 招股总览 —— 由 GitHub Actions 每日自动更新，请勿手动编辑 */
-            window.IPO_UPDATED = "YYYY/MM/DD（云端自动更新）";
-            window.IPO_OVERVIEW = [
-              { name:"…", code:"…", open:"…", close:"…", list:"…", sponsor:"…" }
-            ];
-
-            【只改数据行】如发现某只股票的 开簿/招股截止/上市日/保荐人 有误或过时，或有新股开始招股、
-            旧股已上市需移除，就用 Edit/Write 修正 ipo_data.js 的对应数据行；如经核实全部仍准确，可不改动。
-            不要创建其它文件，不要执行 git 命令（提交由后续步骤完成）。
-            文件顶部的“最后更新”时间戳(window.IPO_UPDATED)由后续步骤自动打，你不必管它。
+            改动规则：
+            - 有新股开始招股 → 新增一行；已上市或已截止很久的 → 移除；某只日期/保荐人有误 → 改正；
+            - 若核实后现有数据仍准确，则不要改动。
+            - 只用 Edit/Write 修改 ipo_data.js 这一个文件；不要创建其它文件；不要执行 git 命令；
+            - 不要改文件顶部的 window.IPO_UPDATED（时间戳由后续步骤自动打，你不用管）。
 
       - name: 打运行时间戳（每次留痕）
+        if: always()            # 即使上一步超时/失败也执行，保证有心跳
         run: |
           TS=$(TZ=Asia/Hong_Kong date +'%Y/%m/%d %H:%M')
           sed -i -E "s#(IPO_UPDATED = \").*(\")#\\1${TS}（云端自动更新）\\2#" ipo_data.js
           echo "已写入时间戳:"; grep IPO_UPDATED ipo_data.js
 
       - name: 提交更新
+        if: always()            # 同上，确保每次都尝试提交
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
