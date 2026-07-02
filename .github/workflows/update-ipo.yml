@@ -47,20 +47,26 @@ jobs:
               { name:"…", code:"…", open:"…", close:"…", list:"…", sponsor:"…" }
             ];
 
-            【务必写入】无论今天核实的结果与现有 ipo_data.js 是否相同，都必须重新写入该文件，
-            并把 window.IPO_UPDATED 设为当前 UTC 日期，格式如 "2026/07/02（云端自动更新）"。
-            这样每天都会留下一次提交记录，便于确认任务在运行。
+            【只改数据行】如发现某只股票的 开簿/招股截止/上市日/保荐人 有误或过时，或有新股开始招股、
+            旧股已上市需移除，就用 Edit/Write 修正 ipo_data.js 的对应数据行；如经核实全部仍准确，可不改动。
+            不要创建其它文件，不要执行 git 命令（提交由后续步骤完成）。
+            文件顶部的“最后更新”时间戳(window.IPO_UPDATED)由后续步骤自动打，你不必管它。
 
-            只需覆盖写入 ipo_data.js 这一个文件，不要创建其它文件，不要执行 git 命令（提交由后续步骤完成）。
+      - name: 打运行时间戳（每次留痕）
+        run: |
+          TS=$(TZ=Asia/Hong_Kong date +'%Y/%m/%d %H:%M')
+          sed -i -E "s#(IPO_UPDATED = \").*(\")#\\1${TS}（云端自动更新）\\2#" ipo_data.js
+          echo "已写入时间戳:"; grep IPO_UPDATED ipo_data.js
 
-      - name: 提交更新（如有变化）
+      - name: 提交更新
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain ipo_data.js)" ]; then
             git add ipo_data.js
-            git commit -m "chore: 每日自动更新招股总览 ($(date -u +%Y-%m-%d))"
+            git commit -m "chore: 自动更新招股总览 ($(TZ=Asia/Hong_Kong date +%Y-%m-%d))"
             git push
+            echo "已提交并推送。"
           else
             echo "ipo_data.js 无变化，跳过提交"
           fi
