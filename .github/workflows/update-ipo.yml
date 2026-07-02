@@ -52,13 +52,16 @@ jobs:
 
       - name: 提交更新
         if: always()            # 同上，确保每次都尝试提交
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain ipo_data.js)" ]; then
             git add ipo_data.js
             git commit -m "chore: 自动更新招股总览 ($(TZ=Asia/Hong_Kong date +%Y-%m-%d))"
-            git push
+            # 显式带 token 推送，绕开凭证被清的问题
+            git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main
             echo "已提交并推送。"
           else
             echo "ipo_data.js 无变化，跳过提交"
