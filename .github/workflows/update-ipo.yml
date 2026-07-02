@@ -3,66 +3,87 @@ name: 每日更新港股招股总览
 on:
   schedule:
     - cron: '15 0 * * *'      # 00:15 UTC = 香港时间 08:15，每天一次
-  workflow_dispatch:            # 允许在网页上手动 Run workflow
+  workflow_dispatch:            # 允许网页手动 Run workflow
 
 permissions:
-  contents: write               # 允许提交回仓库
-  id-token: write               # claude-code-action 需要它换取 OIDC 令牌
+  contents: write
+  id-token: write
 
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 12         # 整个任务最多 12 分钟，防止卡死空烧
+    timeout-minutes: 15         # 整个任务最多 15 分钟，防卡死
     steps:
       - name: 拉取仓库
         uses: actions/checkout@v4
 
-      - name: 用 Claude 联网核实并修正 ipo_data.js
+      - name: 用 Claude 更新总览与逐只明细
         uses: anthropics/claude-code-action@v1
-        timeout-minutes: 8      # Claude 这一步最多 8 分钟，超时即止
+        timeout-minutes: 11     # Claude 这步最多 11 分钟，超时即止
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          claude_args: '--allowedTools "WebSearch,WebFetch,Read,Edit,Write" --max-turns 30'
+          claude_args: '--allowedTools "WebSearch,WebFetch,Read,Edit,Write" --max-turns 60'
           prompt: |
-            你在一个 GitHub Actions 环境里，仓库根目录有文件 ipo_data.js（内含 window.IPO_OVERVIEW 数组）。
-            任务：用最多几分钟，联网核实“当前在香港招股中 / 即将上市”的新股，必要时修正 ipo_data.js 的数据行。高效完成，不要反复狂搜。
+            你在一个 GitHub Actions 环境里，仓库根目录有两个数据文件：
+            ipo_data.js（window.IPO_OVERVIEW：招股总览）
+            deal_details.js（window.IPO_DEALS：逐只交易明细，键为股票代码如 "6745.HK"）
+            高效完成，不要反复狂搜。
 
-            每只股票字段：
-            { name:"简称", code:"NNNN.HK", open:"开簿日(招股开始)", close:"簿记结束(招股截止)", list:"上市日", sponsor:"保荐人" }
-            - 日期用 2026/M/D 格式（年份按实际）。
-            - 保荐人含联席时用中文顿号“、”分隔，如 "中信证券(香港)、高盛(亚洲)、中金公司(香港)"。
+            【任务一：更新招股总览 ipo_data.js】
+            联网核实“当前在香港招股中 / 即将上市”的新股，必要时修正数据行。每只字段：
+            { name:"简称", code:"NNNN.HK", open:"开簿日", close:"招股截止日", list:"上市日", sponsor:"保荐人" }
+            - 日期用 2026/M/D；保荐人含联席时用中文顿号“、”分隔。
+            - 用 WebSearch/WebFetch 查经济日报(hket)、新浪财经、东方财富、ZAKER 等个股招股新闻；
+              AAStocks/富途 日历页只给相对日期、易把“招股截止日”与“上市日”弄混，不要采信其笼统摘要。
+            - 每字段尽量两个独立来源一致再写；核不实就保留原值或留空，不要猜。
+            - 有新股→新增行；已上市或久已截止→移除；有误→改正；都对则不动。
+            - 不要改 ipo_data.js 顶部的 window.IPO_UPDATED（时间戳由后续步骤自动打）。
 
-            核实要求：
-            - 用 WebSearch / WebFetch 查经济日报(hket)、新浪财经、东方财富、ZAKER、证券时报等个股招股新闻；
-            - AAStocks / 富途 的日历页只给相对日期、易把“招股截止日”与“上市日”弄混，不要采信其笼统摘要；
-            - 每个字段尽量两个独立来源一致再写；核不实就保留原值或留空，绝不猜测。
+            【任务二：补齐逐只明细 deal_details.js —— 仅对“新股”，没有新股就跳过】
+            - 读 ipo_data.js 得到“当前在招(未上市)股票代码”；读 deal_details.js 得到 window.IPO_DEALS 已有的键。
+            - 找出“在招、但 deal_details.js 里还没有明细”的股票。若没有这样的股票，则【完全不改 deal_details.js】，任务二结束。
+            - 若有，最多挑 3 只（优先临近上市日的），逐只联网研究，在 window.IPO_DEALS 中“新增”其条目，字段：
+                fx: 7.84,
+                shares: 全球发售规模(股,数字),
+                price: 发行价(定价或招股价上限,数字),
+                publicPct: 公开发售占比(数字,如 10),
+                cornerUSD: 基石认购总额(美元,数字;无基石填 0),
+                lot: 每手股数(数字,逐只不同,务必查准),
+                apply/allotdate/listdate/settledate: 日期(2026/M/D),
+                margin: "否", ibrole: "否",
+                winrate: "",
+                cash: "本次申购金额为净现金放大5倍申购，并保证获配金额少于净现金水平。",
+                issue: 发行情况(发行新股数量、公开/国际发售占比),
+                fund: 募集资金规模与用途,
+                corner: 基石投资者(名称与金额),
+                basis: 投资依据/亮点(分点，用 \n 分隔),
+                risk: 风险提示(分点，用 \n 分隔)
+            - 每手股数、发售价、发售规模、基石、日期 在个股招股新闻里都有；basis/risk 从招股或分析文章总结。
+            - 【务必】原样保留 deal_details.js 已有条目（尤其 "6745.HK"），只“新增”键，不要改动或删除已有条目；
+              保持文件是合法 JS：window.IPO_DEALS = { ... };
+            - 不确定的字段留空字符串 ""，绝不编造。
 
-            改动规则：
-            - 有新股开始招股 → 新增一行；已上市或已截止很久的 → 移除；某只日期/保荐人有误 → 改正；
-            - 若核实后现有数据仍准确，则不要改动。
-            - 只用 Edit/Write 修改 ipo_data.js 这一个文件；不要创建其它文件；不要执行 git 命令；
-            - 不要改文件顶部的 window.IPO_UPDATED（时间戳由后续步骤自动打，你不用管）。
+            只修改 ipo_data.js 与 deal_details.js 这两个文件；不要创建其它文件；不要执行 git 命令。
 
       - name: 打运行时间戳（每次留痕）
-        if: always()            # 即使上一步超时/失败也执行，保证有心跳
+        if: always()              # 即使上一步超时也执行，保证心跳
         run: |
           TS=$(TZ=Asia/Hong_Kong date +'%Y/%m/%d %H:%M')
           sed -i -E "s#(IPO_UPDATED = \").*(\")#\\1${TS}（云端自动更新）\\2#" ipo_data.js
           echo "已写入时间戳:"; grep IPO_UPDATED ipo_data.js
 
       - name: 提交更新
-        if: always()            # 同上，确保每次都尝试提交
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          if [ -n "$(git status --porcelain ipo_data.js)" ]; then
-            git add ipo_data.js
-            git commit -m "chore: 自动更新招股总览 ($(TZ=Asia/Hong_Kong date +%Y-%m-%d))"
-            # 显式带 token 推送，绕开凭证被清的问题
+          git add ipo_data.js deal_details.js 2>/dev/null || true
+          if [ -n "$(git status --porcelain ipo_data.js deal_details.js)" ]; then
+            git commit -m "chore: 自动更新招股总览/明细 ($(TZ=Asia/Hong_Kong date +%Y-%m-%d))"
             git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main
             echo "已提交并推送。"
           else
-            echo "ipo_data.js 无变化，跳过提交"
+            echo "无变化，跳过提交"
           fi
