@@ -6,7 +6,8 @@ on:
   workflow_dispatch:          # 允许在网页上手动点“Run workflow”测试
 
 permissions:
-  contents: write             # 允许提交回仓库
+  contents: write
+  id-token: write             # 允许提交回仓库
 
 jobs:
   update:
