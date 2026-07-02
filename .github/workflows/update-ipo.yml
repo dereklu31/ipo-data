@@ -1,0 +1,61 @@
+name: 每日更新港股招股总览
+
+on:
+  schedule:
+    - cron: '15 0 * * *'    # 00:15 UTC = 香港时间 08:15，每天一次
+  workflow_dispatch:          # 允许在网页上手动点“Run workflow”测试
+
+permissions:
+  contents: write             # 允许提交回仓库
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取仓库
+        uses: actions/checkout@v4
+
+      - name: 用 Claude 联网核实并重写 ipo_data.js
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: '--allowedTools "WebSearch,WebFetch,Read,Write,Edit"'
+          prompt: |
+            你在一个 GitHub Actions 运行环境里，当前工作目录(仓库根目录)有一个文件 ipo_data.js。
+            任务：联网核实“当前在香港招股中 / 即将上市”的新股，然后把 ipo_data.js 整体覆盖重写。
+
+            【每只股票的字段】一个对象：
+            { name:"简称", code:"NNNN.HK", open:"开簿日(招股开始)", close:"簿记结束(招股截止)", list:"上市日", sponsor:"保荐人" }
+            - 日期一律写成 2026/M/D 这种格式（当前年份按实际）。
+            - 不要“暗盘”字段。
+
+            【保荐人】必须逐只核实；有联席保荐人时用中文顿号“、”把多家连起来，
+            例如 "中信证券(香港)、高盛(亚洲)、中金公司(香港)"。
+
+            【可靠性要求 · 非常重要】
+            - 用 WebSearch / WebFetch 检索个股招股新闻：经济日报(hket)、新浪财经、东方财富、ZAKER、凤凰网、证券时报等；
+            - AAStocks、富途 的“上市时间表”页只给“今日截止 / N日后截止”这类相对日期，
+              且自动摘要常把“招股截止日”与“上市日”弄混 —— 不要采信这类笼统结论；
+            - 每个字段至少要有 2 个独立可靠来源一致，才写入；核不实就留空 ""，绝不猜测。
+
+            【输出】用写文件工具把仓库根目录的 ipo_data.js 覆盖为下面的结构（UTF-8 编码，保留注释头）：
+
+            /* 港股 IPO 招股总览 —— 由 GitHub Actions 每日自动更新，请勿手动编辑 */
+            window.IPO_UPDATED = "YYYY/MM/DD（自动更新）";
+            window.IPO_OVERVIEW = [
+              { name:"…", code:"…", open:"…", close:"…", list:"…", sponsor:"…" }
+            ];
+
+            只需覆盖写入 ipo_data.js 这一个文件，不要创建其它文件，不要执行 git 命令（提交由后续步骤完成）。
+
+      - name: 提交更新（如有变化）
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --porcelain ipo_data.js)" ]; then
+            git add ipo_data.js
+            git commit -m "chore: 每日自动更新招股总览 ($(date -u +%Y-%m-%d))"
+            git push
+          else
+            echo "ipo_data.js 无变化，跳过提交"
+          fi
