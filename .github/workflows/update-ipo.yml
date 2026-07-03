@@ -2,8 +2,10 @@ name: 每日更新港股招股总览
 
 on:
   schedule:
-    - cron: '15 0 * * *'      # 00:15 UTC = 香港时间 08:15，每天一次
-  workflow_dispatch:            # 允许网页手动 Run workflow
+    # 双时段错峰：GitHub 定时是“尽力而为”，会延迟/偶尔丢弃，故设主+备两个错峰时间。
+    - cron: '23 0 * * *'      # 00:23 UTC = 香港 08:23（主时段）
+    - cron: '43 4 * * *'      # 04:43 UTC = 香港 12:43（备用；主时段被丢弃时兜底）
+  workflow_dispatch:            # 允许网页手动 Run workflow（手动一律执行，不受“今日已更新”限制）
 
 permissions:
   contents: write
@@ -12,14 +14,28 @@ permissions:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 45         # 整批 16 只研究量大，给足时间；处理不完下次续
+    timeout-minutes: 45
     steps:
       - name: 拉取仓库
         uses: actions/checkout@v4
 
+      - name: 检查今天是否已更新（备用时段去重）
+        id: check
+        run: |
+          TODAY=$(TZ=Asia/Hong_Kong date +%Y/%m/%d)
+          CUR=$(grep -oE 'IPO_UPDATED = "[^"]*"' ipo_data.js | head -1)
+          echo "今天(HK)=$TODAY ; 文件时间戳=$CUR ; 触发=${{ github.event_name }}"
+          if [ "${{ github.event_name }}" = "schedule" ] && echo "$CUR" | grep -q "$TODAY"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "→ 今天已由主时段更新过，本次（备用/定时）跳过，避免重复。"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: 用 Claude 更新总览与逐只明细
+        if: steps.check.outputs.skip != 'true'
         uses: anthropics/claude-code-action@v1
-        timeout-minutes: 42     # Claude 这步最多 42 分钟
+        timeout-minutes: 42
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: '--allowedTools "WebSearch,WebFetch,Read,Edit,Write" --max-turns 300'
@@ -68,14 +84,14 @@ jobs:
             只修改 ipo_data.js 与 deal_details.js 这两个文件；不要创建其它文件；不要执行 git 命令。
 
       - name: 打运行时间戳（每次留痕）
-        if: always()              # 即使上一步超时也执行，保证心跳
+        if: always() && steps.check.outputs.skip != 'true'
         run: |
           TS=$(TZ=Asia/Hong_Kong date +'%Y/%m/%d %H:%M')
           sed -i -E "s#(IPO_UPDATED = \").*(\")#\\1${TS}（云端自动更新）\\2#" ipo_data.js
           echo "已写入时间戳:"; grep IPO_UPDATED ipo_data.js
 
       - name: 提交更新
-        if: always()
+        if: always() && steps.check.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
