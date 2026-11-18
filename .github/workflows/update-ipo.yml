@@ -32,6 +32,19 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: 计算待办（在招股缺明细 / 缺发行后总股本）
+        id: todo
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          node -e '
+            const fs=require("fs"),vm=require("vm"); const c={window:{}}; vm.createContext(c);
+            vm.runInContext(fs.readFileSync("ipo_data.js","utf8"),c); vm.runInContext(fs.readFileSync("deal_details.js","utf8"),c);
+            const codes=(c.window.IPO_OVERVIEW||[]).map(o=>o.code).filter(Boolean), dl=c.window.IPO_DEALS||{};
+            const noDeal=codes.filter(k=>!dl[k]), noPS=codes.filter(k=>dl[k] && !(+dl[k].postShares>0));
+            const out=`need_details=${noDeal.join("、")||"无"}\nneed_postshares=${noPS.join("、")||"无"}\n`;
+            fs.appendFileSync(process.env.GITHUB_OUTPUT,out); console.log(out);
+          '
+
       - name: 用 Claude 更新总览与逐只明细
         if: steps.check.outputs.skip != 'true'
         uses: anthropics/claude-code-action@v1
@@ -43,7 +56,12 @@ jobs:
             你在一个 GitHub Actions 环境里，仓库根目录有两个数据文件：
             ipo_data.js（window.IPO_OVERVIEW：招股总览）
             deal_details.js（window.IPO_DEALS：逐只交易明细，键为股票代码如 "6745.HK"）
-            高效完成，不要反复狂搜。
+            高效完成，不要反复狂搜；但下面三个任务每一项都必须实际执行，不能因为“总览看起来没变”就提前结束。
+
+            【脚本在本次开跑时已算出的待办清单 —— 必须逐只处理】
+            - 在招但 deal_details.js 还没有明细（→任务二）：${{ steps.todo.outputs.need_details }}
+            - 在招、已有明细但缺 postShares（→任务三）：${{ steps.todo.outputs.need_postshares }}
+            （任务一若新增了在招股，新增的也按任务二处理。清单为“无”的那项可跳过。）
 
             【任务一：更新招股总览 ipo_data.js】
             联网核实“当前在香港招股中 / 即将上市”的新股，必要时修正数据行。每只字段：
@@ -92,10 +110,32 @@ jobs:
               （H股 + A股 / 内资股 / 非上市股份 / 未上市外资股 / A类B类股 等全部加总），不是只算 H 股或只算本次发行。
             - 来源：招股章程「股本」章节、发售价及配发结果公告、个股招股新闻里的“发行完成后总股本约 X 股”或
               “H股占发行后总股本 X%”（可由 H股数÷占比 反推，但要注明是反推并尽量找第二来源）。A+H 公司可用 A 股已发行总数 + 本次 H 股数。
+            - 个股新闻往往【不写】总股本，别只靠新闻：招股章程在披露易(hkexnews.hk)按章节拆成多个 PDF，「股本 / Share Capital」
+              通常单独一个文件，表格写明“全球發售完成後已發行股份總數（假設超額配股權未獲行使）”；可 WebSearch
+              “公司全称 招股章程 股本 site:hkexnews.hk”或英文名 + “Share Capital” 找到后 WebFetch 该 PDF。
+              18C/B 类公司也可用“全球发售完成后 H股占已发行股本 X%”的表述反推。
             - 校验：shares ÷ postShares 应在合理区间（通常 2%–30%）；明显不合理就不写。
             - 用于网页的“所有产品合计参与金额 ≤ 发行后总股本 × 0.9%”合规校验，写错会直接影响合规判断，宁缺毋滥。
 
             只修改 ipo_data.js 与 deal_details.js 这两个文件；不要创建其它文件；不要执行 git 命令。
+
+      - name: 事后核对（缺 postShares 只打黄色警告；数据文件非法 JS 则不提交）
+        id: verify
+        if: always() && steps.check.outputs.skip != 'true'
+        run: |
+          node -e '
+            const fs=require("fs"),vm=require("vm"); const c={window:{}}; vm.createContext(c);
+            try{ vm.runInContext(fs.readFileSync("ipo_data.js","utf8"),c); vm.runInContext(fs.readFileSync("deal_details.js","utf8"),c); }
+            catch(e){ console.log("::error::数据文件不是合法 JS：" + e.message); process.exit(1); }
+            const codes=(c.window.IPO_OVERVIEW||[]).map(o=>o.code).filter(Boolean), dl=c.window.IPO_DEALS||{};
+            const noDeal=codes.filter(k=>!dl[k]), noPS=codes.filter(k=>dl[k] && !(+dl[k].postShares>0));
+            const lines=[];
+            codes.forEach(k=>{ const d=dl[k]; if(d&&+d.postShares>0){ const r=d.shares/d.postShares; lines.push(`${k} postShares=${d.postShares} 发售占比=${(r*100).toFixed(1)}%`); if(r<0.02||r>0.3) console.log(`::warning::${k} 发售规模/发行后总股本=${(r*100).toFixed(1)}%，超出 2%–30% 常见区间，请人工核对`); } });
+            if(noDeal.length) console.log(`::warning::仍缺明细：${noDeal.join("、")}`);
+            if(noPS.length)   console.log(`::warning::仍缺发行后总股本 postShares（网页需手填）：${noPS.join("、")}`);
+            const sum=["### 事后核对","- 在招："+(codes.join("、")||"无"),"- 仍缺明细："+(noDeal.join("、")||"无"),"- 仍缺 postShares："+(noPS.join("、")||"无"),...lines.map(l=>"- "+l)].join("\n")+"\n";
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,sum); console.log(sum);
+          '
 
       - name: 打运行时间戳（每次留痕）
         if: always() && steps.check.outputs.skip != 'true'
@@ -105,7 +145,7 @@ jobs:
           echo "已写入时间戳:"; grep IPO_UPDATED ipo_data.js
 
       - name: 提交更新
-        if: always() && steps.check.outputs.skip != 'true'
+        if: always() && steps.check.outputs.skip != 'true' && steps.verify.outcome != 'failure'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
