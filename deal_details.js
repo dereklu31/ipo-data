@@ -959,6 +959,7 @@ window.IPO_DEALS = {
   "9941.HK": {
     fx: 7.84,
     shares: 6561000,
+    postShares: 65609614,   // 招股章程「SHARE CAPITAL」：全球发售完成后(超额配股权未行使)已发行股份总数
     price: 68,
     publicPct: 10,
     cornerUSD: 0,
