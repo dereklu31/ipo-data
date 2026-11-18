@@ -32,7 +32,7 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: 计算待办（在招股缺明细 / 缺发行后总股本）
+      - name: 计算待办（在招股缺明细）
         id: todo
         if: steps.check.outputs.skip != 'true'
         run: |
@@ -40,8 +40,7 @@ jobs:
             const fs=require("fs"),vm=require("vm"); const c={window:{}}; vm.createContext(c);
             vm.runInContext(fs.readFileSync("ipo_data.js","utf8"),c); vm.runInContext(fs.readFileSync("deal_details.js","utf8"),c);
             const codes=(c.window.IPO_OVERVIEW||[]).map(o=>o.code).filter(Boolean), dl=c.window.IPO_DEALS||{};
-            const noDeal=codes.filter(k=>!dl[k]), noPS=codes.filter(k=>dl[k] && !(+dl[k].postShares>0));
-            const out=`need_details=${noDeal.join("、")||"无"}\nneed_postshares=${noPS.join("、")||"无"}\n`;
+            const out=`need_details=${codes.filter(k=>!dl[k]).join("、")||"无"}\n`;
             fs.appendFileSync(process.env.GITHUB_OUTPUT,out); console.log(out);
           '
 
@@ -56,12 +55,11 @@ jobs:
             你在一个 GitHub Actions 环境里，仓库根目录有两个数据文件：
             ipo_data.js（window.IPO_OVERVIEW：招股总览）
             deal_details.js（window.IPO_DEALS：逐只交易明细，键为股票代码如 "6745.HK"）
-            高效完成，不要反复狂搜；但下面三个任务每一项都必须实际执行，不能因为“总览看起来没变”就提前结束。
+            高效完成，不要反复狂搜；但下面两个任务每一项都必须实际执行，不能因为“总览看起来没变”就提前结束。
 
             【脚本在本次开跑时已算出的待办清单 —— 必须逐只处理】
             - 在招但 deal_details.js 还没有明细（→任务二）：${{ steps.todo.outputs.need_details }}
-            - 在招、已有明细但缺 postShares（→任务三）：${{ steps.todo.outputs.need_postshares }}
-            （任务一若新增了在招股，新增的也按任务二处理。清单为“无”的那项可跳过。）
+            （任务一若新增了在招股，新增的也按任务二处理。清单为“无”则任务二可跳过。）
 
             【任务一：更新招股总览 ipo_data.js】
             联网核实“当前在香港招股中 / 即将上市”的新股，必要时修正数据行。每只字段：
@@ -73,15 +71,14 @@ jobs:
             - 有新股→新增行；已上市或久已截止→移除；有误→改正；都对则不动。
             - 不要改 ipo_data.js 顶部的 window.IPO_UPDATED（时间戳由后续步骤自动打）。
 
-            【任务二：补齐逐只明细 deal_details.js —— 仅对“新股”，没有新股就跳过（但仍要做任务三）】
+            【任务二：补齐逐只明细 deal_details.js —— 仅对“新股”，没有新股就跳过】
             - 读 ipo_data.js 得到“当前在招(未上市)股票代码”；读 deal_details.js 得到 window.IPO_DEALS 已有的键。
-            - 找出“在招、但 deal_details.js 里还没有明细”的股票。若没有这样的股票，任务二结束，直接做任务三。
+            - 找出“在招、但 deal_details.js 里还没有明细”的股票。若没有这样的股票，则【完全不改 deal_details.js】，任务二结束。
             - 若有，就把它们【全部】逐只补齐（不设数量上限；优先临近上市日的先做）。
               每处理完一只就立刻用 Edit 写入 deal_details.js 保存（别攒到最后），这样即使中途超时，已完成的也已落盘、下次只补剩下的。
               在 window.IPO_DEALS 中“新增”每只的条目，字段：
                 fx: 7.84,
-                shares: 全球发售规模(股,数字),
-                postShares: 发行后总股本(股,数字；口径与查法见下方【发行后总股本 postShares】；核不实就不写这个字段),
+                shares: 全球发售规模(股,数字；【务必准确】——后续脚本靠它在招股章程股本表里交叉核对发行后总股本),
                 price: 发行价(定价或招股价上限,数字),
                 publicPct: 公开发售占比(数字,如 10),
                 cornerUSD: 基石认购总额(美元,数字;无基石填 0),
@@ -96,28 +93,20 @@ jobs:
                 basis: 投资依据/亮点(分点，用 \n 分隔),
                 risk: 风险提示(分点，用 \n 分隔)
             - 每手股数、发售价、发售规模、基石、日期 在个股招股新闻里都有；basis/risk 从招股或分析文章总结。
-            - 【务必】原样保留 deal_details.js 已有条目（尤其 "6745.HK"），只“新增”键，不要改动或删除已有条目
-              （唯一例外见任务三：给已有条目补一行 postShares）；保持文件是合法 JS：window.IPO_DEALS = { ... };
+            - 【务必】原样保留 deal_details.js 已有条目（尤其 "6745.HK"），只“新增”键，不要改动或删除已有条目；
+              保持文件是合法 JS：window.IPO_DEALS = { ... };
             - 不确定的字段留空字符串 ""，绝不编造。
-
-            【任务三：给“在招、已有明细、但缺 postShares”的条目补发行后总股本】
-            - 对 ipo_data.js 里当前在招(未上市)、且 deal_details.js 已有条目、但条目里没有 postShares 的股票，逐只查发行后总股本。
-            - 查实后只用 Edit 在该条目的 shares 行下面插入一行 `    postShares: 数字,`；该条目其它字段一律不动。
-            - 查不实就跳过该只（不写、不留空串），下次再试。没有需要补的就不改 deal_details.js。
-
-            【发行后总股本 postShares —— 口径与查法（任务二、三通用）】
-            - 口径：全球发售完成后、【假设超额配股权未获行使】时，公司已发行股份总数，含【所有类别】股份
-              （H股 + A股 / 内资股 / 非上市股份 / 未上市外资股 / A类B类股 等全部加总），不是只算 H 股或只算本次发行。
-            - 来源：招股章程「股本」章节、发售价及配发结果公告、个股招股新闻里的“发行完成后总股本约 X 股”或
-              “H股占发行后总股本 X%”（可由 H股数÷占比 反推，但要注明是反推并尽量找第二来源）。A+H 公司可用 A 股已发行总数 + 本次 H 股数。
-            - 个股新闻往往【不写】总股本，别只靠新闻：招股章程在披露易(hkexnews.hk)按章节拆成多个 PDF，「股本 / Share Capital」
-              通常单独一个文件，表格写明“全球發售完成後已發行股份總數（假設超額配股權未獲行使）”；可 WebSearch
-              “公司全称 招股章程 股本 site:hkexnews.hk”或英文名 + “Share Capital” 找到后 WebFetch 该 PDF。
-              18C/B 类公司也可用“全球发售完成后 H股占已发行股本 X%”的表述反推。
-            - 校验：shares ÷ postShares 应在合理区间（通常 2%–30%）；明显不合理就不写。
-            - 用于网页的“所有产品合计参与金额 ≤ 发行后总股本 × 0.9%”合规校验，写错会直接影响合规判断，宁缺毋滥。
+            - 【不要写 postShares 字段】发行后总股本由后续脚本直接从披露易招股章程「SHARE CAPITAL」表抽取并写入，你不用管。
 
             只修改 ipo_data.js 与 deal_details.js 这两个文件；不要创建其它文件；不要执行 git 命令。
+
+      - name: 抓取发行后总股本（脚本读披露易英文招股章程 SHARE CAPITAL 表）
+        if: always() && steps.check.outputs.skip != 'true'
+        continue-on-error: true
+        timeout-minutes: 10
+        run: |
+          command -v pdftotext >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils >/dev/null; }
+          node scripts/fill_postshares.js
 
       - name: 事后核对（缺 postShares 只打黄色警告；数据文件非法 JS 则不提交）
         id: verify

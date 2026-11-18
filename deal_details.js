@@ -2,7 +2,8 @@
    港股 IPO 逐只“交易明细”数据 —— 供网页下拉选股后自动填入 ②交易参数 与 ⑤叙述
    由 Claude 从招股书抽取后写入；键为股票代码(带 .HK)。
    字段：fx 汇率(可留空走自动) / shares 全球发售规模 /
-        postShares 发行后总股本(全部类别股份、不计超额配股权；用于“所有产品合计≤总股本0.9%”校验，可缺省) / price 发行价 /
+        postShares 发行后总股本(全部类别股份、不计超额配股权；由 scripts/fill_postshares.js 从披露易英文招股章程
+                   SHARE CAPITAL 表抽取并与 shares 交叉核对；用于“所有产品合计≤总股本0.9%”校验，可缺省) / price 发行价 /
         publicPct 公开发售占比% / cornerUSD 基石USD / lot 每手股数 /
         apply 申请日 / allotdate 分配公布 / listdate 上市 / settledate 交收 /
         margin 孖展 / ibrole 工银瑞银角色 /
